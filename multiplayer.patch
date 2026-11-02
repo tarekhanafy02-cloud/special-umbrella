@@ -1,0 +1,657 @@
+From 62038e74ed2145a4f7da696507e405bc4156f6e1 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 2 Nov 2026 05:18:30 +0000
+Subject: [PATCH] Add presence-only multiplayer
+
+Other players are shown as non-interactive ghost characters with synced
+position, rotation and animation, via a small WebSocket relay server.
+Existing gameplay is unchanged; without a server the game runs as before.
+---
+ MULTIPLAYER.md                     |  14 +++
+ package-lock.json                  |  60 +++++++---
+ package.json                       |   6 +-
+ server/server.js                   |  71 +++++++++++
+ src/ts/characters/Character.ts     |   2 +
+ src/ts/multiplayer/Multiplayer.ts  | 182 +++++++++++++++++++++++++++++
+ src/ts/multiplayer/RemotePlayer.ts | 171 +++++++++++++++++++++++++++
+ src/ts/world/World.ts              |   2 +
+ 8 files changed, 491 insertions(+), 17 deletions(-)
+ create mode 100644 MULTIPLAYER.md
+ create mode 100644 server/server.js
+ create mode 100644 src/ts/multiplayer/Multiplayer.ts
+ create mode 100644 src/ts/multiplayer/RemotePlayer.ts
+
+diff --git a/MULTIPLAYER.md b/MULTIPLAYER.md
+new file mode 100644
+index 0000000..a55321c
+--- /dev/null
++++ b/MULTIPLAYER.md
+@@ -0,0 +1,14 @@
++# Multiplayer
++
++Start the relay server, then serve the game as usual:
++
++    npm install
++    npm run server          # ws://localhost:8081
++    npm run dev             # http://localhost:8080  (Node 17+: NODE_OPTIONS=--openssl-legacy-provider npm run dev)
++
++Open the game in two browser windows and you will see each other.
++
++- Other players are drawn as tinted, name-tagged copies of the character, with synced position, rotation and animation. Players inside vehicles are shown too.
++- They are visual only (no collisions, no effect on your physics/vehicles), so existing gameplay is unchanged.
++- To use a different server: `?server=wss://your-host` in the page URL, or set `window.SKETCHBOOK_SERVER` before creating the World.
++- If no server is running the game works exactly as before.
+diff --git a/package-lock.json b/package-lock.json
+index 848d80e..a1224d4 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -13,7 +13,8 @@
+         "lodash": "^4.17.21",
+         "sweetalert2": "^9.17.2",
+         "three": "0.113.0",
+-        "three-csm": "1.0.2"
++        "three-csm": "1.0.2",
++        "ws": "^8.22.1"
+       },
+       "devDependencies": {
+         "@types/jquery": "^3.5.5",
+@@ -519,7 +520,8 @@
+       "version": "1.0.1",
+       "resolved": "https://registry.npmjs.org/async-limiter/-/async-limiter-1.0.1.tgz",
+       "integrity": "sha512-csOlWGAcRFJaI6m+F2WKdnMKr4HhdhFVBk0H/QbJFMCr+uO2kwohwXQPxw/9OCxp05r5ghVBFSyioixx3gfkNQ==",
+-      "dev": true
++      "dev": true,
++      "license": "MIT"
+     },
+     "node_modules/atob": {
+       "version": "2.1.2",
+@@ -7047,6 +7049,16 @@
+         "webpack": "^4.0.0 || ^5.0.0"
+       }
+     },
++    "node_modules/webpack-dev-server/node_modules/ws": {
++      "version": "6.2.6",
++      "resolved": "https://registry.npmjs.org/ws/-/ws-6.2.6.tgz",
++      "integrity": "sha512-XTrf1gv7kXoVf1hbC3PAyAiPgR8Wz1blcrYIjEsUmr08BLksT41R8KbjmS9408C2ERx7v1JDLD/BkpLEttjfKA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "async-limiter": "~1.0.0"
++      }
++    },
+     "node_modules/webpack-log": {
+       "version": "2.0.0",
+       "resolved": "https://registry.npmjs.org/webpack-log/-/webpack-log-2.0.0.tgz",
+@@ -7325,12 +7337,24 @@
+       "dev": true
+     },
+     "node_modules/ws": {
+-      "version": "6.2.2",
+-      "resolved": "https://registry.npmjs.org/ws/-/ws-6.2.2.tgz",
+-      "integrity": "sha512-zmhltoSR8u1cnDsD43TX59mzoMZsLKqUweyYBAIvTngR3shc0W6aOZylZmq/7hqyVxPdi+5Ud2QInblgyE72fw==",
+-      "dev": true,
+-      "dependencies": {
+-        "async-limiter": "~1.0.0"
++      "version": "8.22.1",
++      "resolved": "https://registry.npmjs.org/ws/-/ws-8.22.1.tgz",
++      "integrity": "sha512-oyL6OPYme/CmiFvNuGzeoxCJ4nOrZE2O1FwM9MWM1AsGri6nLXB2pg+lNA8aLeXMSav0J6eIVS1j6vUPzUtK9g==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=10.0.0"
++      },
++      "peerDependencies": {
++        "bufferutil": "^4.0.1",
++        "utf-8-validate": ">=5.0.2"
++      },
++      "peerDependenciesMeta": {
++        "bufferutil": {
++          "optional": true
++        },
++        "utf-8-validate": {
++          "optional": true
++        }
+       }
+     },
+     "node_modules/xtend": {
+@@ -13314,6 +13338,15 @@
+             "range-parser": "^1.2.1",
+             "webpack-log": "^2.0.0"
+           }
++        },
++        "ws": {
++          "version": "6.2.6",
++          "resolved": "https://registry.npmjs.org/ws/-/ws-6.2.6.tgz",
++          "integrity": "sha512-XTrf1gv7kXoVf1hbC3PAyAiPgR8Wz1blcrYIjEsUmr08BLksT41R8KbjmS9408C2ERx7v1JDLD/BkpLEttjfKA==",
++          "dev": true,
++          "requires": {
++            "async-limiter": "~1.0.0"
++          }
+         }
+       }
+     },
+@@ -13422,13 +13455,10 @@
+       "dev": true
+     },
+     "ws": {
+-      "version": "6.2.2",
+-      "resolved": "https://registry.npmjs.org/ws/-/ws-6.2.2.tgz",
+-      "integrity": "sha512-zmhltoSR8u1cnDsD43TX59mzoMZsLKqUweyYBAIvTngR3shc0W6aOZylZmq/7hqyVxPdi+5Ud2QInblgyE72fw==",
+-      "dev": true,
+-      "requires": {
+-        "async-limiter": "~1.0.0"
+-      }
++      "version": "8.22.1",
++      "resolved": "https://registry.npmjs.org/ws/-/ws-8.22.1.tgz",
++      "integrity": "sha512-oyL6OPYme/CmiFvNuGzeoxCJ4nOrZE2O1FwM9MWM1AsGri6nLXB2pg+lNA8aLeXMSav0J6eIVS1j6vUPzUtK9g==",
++      "requires": {}
+     },
+     "xtend": {
+       "version": "4.0.2",
+diff --git a/package.json b/package.json
+index 90d4252..115db68 100644
+--- a/package.json
++++ b/package.json
+@@ -15,7 +15,8 @@
+   "types": "build/types/sketchbook.d.ts",
+   "scripts": {
+     "dev": "webpack-dev-server --config webpack.dev.js",
+-    "build": "webpack --config webpack.prod.js"
++    "build": "webpack --config webpack.prod.js",
++    "server": "node server/server.js"
+   },
+   "repository": {
+     "type": "git",
+@@ -44,6 +45,7 @@
+     "lodash": "^4.17.21",
+     "sweetalert2": "^9.17.2",
+     "three": "0.113.0",
+-    "three-csm": "1.0.2"
++    "three-csm": "1.0.2",
++    "ws": "^8.22.1"
+   }
+ }
+diff --git a/server/server.js b/server/server.js
+new file mode 100644
+index 0000000..d94ceb3
+--- /dev/null
++++ b/server/server.js
+@@ -0,0 +1,71 @@
++// Minimal Sketchbook multiplayer relay.
++// Every client sends its own state; the server forwards it to everyone else.
++// Run with: npm run server   (PORT env var overrides the default 8081)
++const WebSocket = require('ws');
++
++const PORT = process.env.PORT || 8081;
++const wss = new WebSocket.Server({ port: PORT });
++
++let nextId = 1;
++const clients = new Map(); // id -> { ws, name, color, state }
++
++function send(ws, msg)
++{
++	if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
++}
++
++function broadcast(msg, exceptId)
++{
++	const data = JSON.stringify(msg);
++	clients.forEach((c, id) =>
++	{
++		if (id !== exceptId && c.ws.readyState === WebSocket.OPEN) c.ws.send(data);
++	});
++}
++
++wss.on('connection', (ws) =>
++{
++	const id = nextId++;
++	const hue = Math.floor(Math.random() * 360);
++	const client = { ws, name: 'Player ' + id, hue, state: null };
++	clients.set(id, client);
++
++	// Tell the newcomer who they are and who is already here
++	const others = [];
++	clients.forEach((c, cid) =>
++	{
++		if (cid !== id) others.push({ id: cid, name: c.name, hue: c.hue, state: c.state });
++	});
++	send(ws, { type: 'welcome', id, name: client.name, hue, players: others });
++
++	// Tell everyone else about the newcomer
++	broadcast({ type: 'join', id, name: client.name, hue }, id);
++
++	ws.on('message', (raw) =>
++	{
++		let msg;
++		try { msg = JSON.parse(raw); } catch (e) { return; }
++		if (!msg || typeof msg !== 'object') return;
++
++		if (msg.type === 'state' && Array.isArray(msg.s) && msg.s.length === 7 && msg.s.every(Number.isFinite))
++		{
++			client.state = { s: msg.s, a: String(msg.a || 'idle').slice(0, 64) };
++			broadcast({ type: 'state', id, s: client.state.s, a: client.state.a }, id);
++		}
++		else if (msg.type === 'name' && typeof msg.name === 'string')
++		{
++			client.name = msg.name.slice(0, 20) || client.name;
++			broadcast({ type: 'name', id, name: client.name }, id);
++		}
++	});
++
++	ws.on('close', () =>
++	{
++		clients.delete(id);
++		broadcast({ type: 'leave', id });
++	});
++
++	ws.on('error', () => {});
++});
++
++console.log('Sketchbook multiplayer server listening on ws://localhost:' + PORT);
+diff --git a/src/ts/characters/Character.ts b/src/ts/characters/Character.ts
+index 03f3b73..4e512b8 100644
+--- a/src/ts/characters/Character.ts
++++ b/src/ts/characters/Character.ts
+@@ -39,6 +39,7 @@ export class Character extends THREE.Object3D implements IWorldEntity
+ 	public materials: THREE.Material[] = [];
+ 	public mixer: THREE.AnimationMixer;
+ 	public animations: any[];
++	public currentAnimation: string; // read by multiplayer to mirror this character's animation
+ 
+ 	// Movement
+ 	public acceleration: THREE.Vector3 = new THREE.Vector3();
+@@ -510,6 +511,7 @@ export class Character extends THREE.Object3D implements IWorldEntity
+ 				return 0;
+ 			}
+ 
++			this.currentAnimation = clipName;
+ 			this.mixer.stopAllAction();
+ 			action.fadeIn(fadeIn);
+ 			action.play();
+diff --git a/src/ts/multiplayer/Multiplayer.ts b/src/ts/multiplayer/Multiplayer.ts
+new file mode 100644
+index 0000000..6a313e5
+--- /dev/null
++++ b/src/ts/multiplayer/Multiplayer.ts
+@@ -0,0 +1,182 @@
++import * as THREE from 'three';
++import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
++import { World } from '../world/World';
++import { Character } from '../characters/Character';
++import { IUpdatable } from '../interfaces/IUpdatable';
++import { RemotePlayer } from './RemotePlayer';
++
++/**
++ * Presence-only multiplayer. Each client reports where its own character is and what it is
++ * doing, and draws everyone else as non-interactive ghosts. Gameplay itself is untouched.
++ *
++ * Server address: ?server=ws://host:port in the page URL, or window.SKETCHBOOK_SERVER,
++ * otherwise ws(s)://<page hostname>:8081.
++ */
++export class Multiplayer implements IUpdatable
++{
++	public updateOrder: number = 10;
++
++	private world: World;
++	private socket: WebSocket;
++	private players: { [id: number]: RemotePlayer } = {};
++	private pending: any[] = [];
++	private characterGltf: any;
++	private sendTimer: number = 0;
++	private sendInterval: number = 1 / 20;
++	private retryDelay: number = 2000;
++	private warned: boolean = false;
++
++	private tmpPos: THREE.Vector3 = new THREE.Vector3();
++	private tmpQuat: THREE.Quaternion = new THREE.Quaternion();
++
++	constructor(world: World, characterModelPath: string = 'build/assets/boxman.glb')
++	{
++		this.world = world;
++
++		new GLTFLoader().load(characterModelPath, (gltf) =>
++		{
++			this.characterGltf = gltf;
++			// Handle anything that arrived while the model was loading
++			const queued = this.pending;
++			this.pending = [];
++			queued.forEach((msg) => this.handleMessage(msg));
++		}, undefined, (error) => console.error('Multiplayer: could not load character model', error));
++
++		this.connect();
++	}
++
++	public update(timeStep: number, unscaledTimeStep: number): void
++	{
++		// Ghosts follow real time, so they don't slow down when the local player uses slow motion
++		const dt = Math.min(unscaledTimeStep, 0.1);
++		for (const id in this.players) this.players[id].update(dt);
++
++		this.sendTimer += dt;
++		if (this.sendTimer >= this.sendInterval)
++		{
++			this.sendTimer = 0;
++			this.sendLocalState();
++		}
++	}
++
++	private getServerUrl(): string
++	{
++		const param = new URLSearchParams(window.location.search).get('server');
++		if (param) return param;
++		if ((window as any).SKETCHBOOK_SERVER) return (window as any).SKETCHBOOK_SERVER;
++		const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
++		return protocol + '://' + (window.location.hostname || 'localhost') + ':8081';
++	}
++
++	private connect(): void
++	{
++		let socket: WebSocket;
++		try
++		{
++			socket = new WebSocket(this.getServerUrl());
++		}
++		catch (e)
++		{
++			this.scheduleReconnect();
++			return;
++		}
++		this.socket = socket;
++
++		socket.onopen = () =>
++		{
++			this.retryDelay = 2000;
++			this.warned = false;
++		};
++		socket.onmessage = (event) =>
++		{
++			let msg;
++			try { msg = JSON.parse(event.data); } catch (e) { return; }
++			if (this.characterGltf) this.handleMessage(msg);
++			else this.pending.push(msg);
++		};
++		socket.onclose = () =>
++		{
++			this.clearPlayers();
++			this.scheduleReconnect();
++		};
++		socket.onerror = () =>
++		{
++			if (!this.warned)
++			{
++				console.info('Multiplayer: server not reachable at ' + this.getServerUrl() + ' (will keep retrying). Start it with "npm run server".');
++				this.warned = true;
++			}
++		};
++	}
++
++	private scheduleReconnect(): void
++	{
++		setTimeout(() => this.connect(), this.retryDelay);
++		this.retryDelay = Math.min(this.retryDelay * 1.5, 15000);
++	}
++
++	private handleMessage(msg: any): void
++	{
++		switch (msg.type)
++		{
++			case 'welcome':
++				this.clearPlayers();
++				msg.players.forEach((p: any) =>
++				{
++					this.addPlayer(p.id, p.name, p.hue);
++					if (p.state) this.players[p.id].setState(p.state.s, p.state.a);
++				});
++				break;
++			case 'join':
++				this.addPlayer(msg.id, msg.name, msg.hue);
++				break;
++			case 'state':
++				if (!this.players[msg.id]) this.addPlayer(msg.id, 'Player ' + msg.id, 200);
++				this.players[msg.id].setState(msg.s, msg.a);
++				break;
++			case 'name':
++				if (this.players[msg.id]) this.players[msg.id].setName(msg.name);
++				break;
++			case 'leave':
++				this.removePlayer(msg.id);
++				break;
++		}
++	}
++
++	private addPlayer(id: number, name: string, hue: number): void
++	{
++		if (this.players[id]) return;
++		this.players[id] = new RemotePlayer(this.world, this.characterGltf, id, name, hue);
++	}
++
++	private removePlayer(id: number): void
++	{
++		if (!this.players[id]) return;
++		this.players[id].dispose();
++		delete this.players[id];
++	}
++
++	private clearPlayers(): void
++	{
++		for (const id in this.players) this.removePlayer(Number(id));
++	}
++
++	private sendLocalState(): void
++	{
++		if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
++
++		const receiver = this.world.inputManager.inputReceiver;
++		if (!(receiver instanceof Character)) return;
++
++		// World-space values so a character sitting inside a vehicle is reported correctly too
++		receiver.getWorldPosition(this.tmpPos);
++		receiver.getWorldQuaternion(this.tmpQuat);
++
++		const r = (n: number) => Math.round(n * 1000) / 1000;
++		this.socket.send(JSON.stringify({
++			type: 'state',
++			s: [r(this.tmpPos.x), r(this.tmpPos.y), r(this.tmpPos.z), r(this.tmpQuat.x), r(this.tmpQuat.y), r(this.tmpQuat.z), r(this.tmpQuat.w)],
++			a: receiver.currentAnimation || 'idle'
++		}));
++	}
++}
+diff --git a/src/ts/multiplayer/RemotePlayer.ts b/src/ts/multiplayer/RemotePlayer.ts
+new file mode 100644
+index 0000000..8bb88a6
+--- /dev/null
++++ b/src/ts/multiplayer/RemotePlayer.ts
+@@ -0,0 +1,171 @@
++import * as THREE from 'three';
++import { SkeletonUtils } from 'three/examples/jsm/utils/SkeletonUtils';
++import { World } from '../world/World';
++
++/**
++ * A visual-only stand-in for another player's character.
++ * No physics and no input: it just mirrors the state received from the server.
++ */
++export class RemotePlayer
++{
++	public id: number;
++	public root: THREE.Group = new THREE.Group();
++	public lastUpdate: number = 0;
++
++	private world: World;
++	private mixer: THREE.AnimationMixer;
++	private animations: THREE.AnimationClip[];
++	private currentAction: THREE.AnimationAction;
++	private currentClipName: string;
++	private nameSprite: THREE.Sprite;
++
++	private targetPosition: THREE.Vector3 = new THREE.Vector3();
++	private targetQuaternion: THREE.Quaternion = new THREE.Quaternion();
++	private hasState: boolean = false;
++
++	constructor(world: World, gltf: any, id: number, name: string, hue: number)
++	{
++		this.world = world;
++		this.id = id;
++		this.animations = gltf.animations;
++
++		// Same hierarchy the real Character uses: capsule center at root, model offset below it
++		const modelContainer = new THREE.Group();
++		modelContainer.position.y = -0.57;
++		const model = SkeletonUtils.clone(gltf.scene) as THREE.Object3D;
++		modelContainer.add(model);
++		this.root.add(modelContainer);
++
++		// Give every player their own tint, with their own material copies
++		const tint = new THREE.Color().setHSL(hue / 360, 0.55, 0.75);
++		model.traverse((child: any) =>
++		{
++			if (child.isMesh)
++			{
++				child.castShadow = true;
++				child.receiveShadow = true;
++				child.frustumCulled = false;
++				if (child.material)
++				{
++					child.material = child.material.clone();
++					if (child.material.color) child.material.color.multiply(tint);
++					world.sky.csm.setupMaterial(child.material);
++				}
++			}
++		});
++
++		this.mixer = new THREE.AnimationMixer(model);
++
++		this.nameSprite = this.createNameSprite(name);
++		this.nameSprite.position.y = 1.2;
++		this.root.add(this.nameSprite);
++
++		this.root.visible = false;
++		world.graphicsWorld.add(this.root);
++	}
++
++	public setName(name: string): void
++	{
++		this.root.remove(this.nameSprite);
++		this.disposeSprite(this.nameSprite);
++		this.nameSprite = this.createNameSprite(name);
++		this.nameSprite.position.y = 1.2;
++		this.root.add(this.nameSprite);
++	}
++
++	public setState(s: number[], animation: string): void
++	{
++		this.targetPosition.set(s[0], s[1], s[2]);
++		this.targetQuaternion.set(s[3], s[4], s[5], s[6]);
++		this.lastUpdate = performance.now();
++
++		if (!this.hasState)
++		{
++			// First packet: snap into place instead of flying in from the origin
++			this.root.position.copy(this.targetPosition);
++			this.root.quaternion.copy(this.targetQuaternion);
++			this.hasState = true;
++		}
++
++		this.playAnimation(animation);
++	}
++
++	public update(dt: number): void
++	{
++		if (!this.hasState) return;
++
++		const stale = performance.now() - this.lastUpdate > 3000;
++		this.root.visible = !stale;
++		if (stale) return;
++
++		// Frame-rate independent smoothing between network updates
++		const k = 1 - Math.exp(-dt * 18);
++		if (this.root.position.distanceToSquared(this.targetPosition) > 25)
++		{
++			this.root.position.copy(this.targetPosition); // teleport / respawn
++		}
++		else
++		{
++			this.root.position.lerp(this.targetPosition, k);
++		}
++		this.root.quaternion.slerp(this.targetQuaternion, k);
++
++		this.mixer.update(dt);
++	}
++
++	public dispose(): void
++	{
++		this.world.graphicsWorld.remove(this.root);
++		this.mixer.stopAllAction();
++		this.disposeSprite(this.nameSprite);
++		this.root.traverse((child: any) =>
++		{
++			if (child.isMesh && child.material) child.material.dispose();
++		});
++	}
++
++	private playAnimation(clipName: string): void
++	{
++		if (clipName === this.currentClipName) return;
++
++		const clip = THREE.AnimationClip.findByName(this.animations, clipName);
++		if (!clip) return;
++
++		const next = this.mixer.clipAction(clip);
++		next.reset().setEffectiveWeight(1).fadeIn(0.15).play();
++		if (this.currentAction) this.currentAction.fadeOut(0.15);
++
++		this.currentAction = next;
++		this.currentClipName = clipName;
++	}
++
++	private createNameSprite(name: string): THREE.Sprite
++	{
++		const canvas = document.createElement('canvas');
++		canvas.width = 256;
++		canvas.height = 64;
++		const ctx = canvas.getContext('2d');
++		ctx.font = 'bold 32px sans-serif';
++		ctx.textAlign = 'center';
++		ctx.textBaseline = 'middle';
++		ctx.lineWidth = 6;
++		ctx.strokeStyle = 'rgba(0,0,0,0.7)';
++		ctx.strokeText(name, 128, 32);
++		ctx.fillStyle = '#ffffff';
++		ctx.fillText(name, 128, 32);
++
++		const texture = new THREE.CanvasTexture(canvas);
++		const material = new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true });
++		const sprite = new THREE.Sprite(material);
++		sprite.scale.set(1.6, 0.4, 1);
++		sprite.renderOrder = 999;
++		return sprite;
++	}
++
++	private disposeSprite(sprite: THREE.Sprite): void
++	{
++		const mat = sprite.material as THREE.SpriteMaterial;
++		if (mat.map) mat.map.dispose();
++		mat.dispose();
++	}
++}
+diff --git a/src/ts/world/World.ts b/src/ts/world/World.ts
+index 266b6a2..568a8b4 100644
+--- a/src/ts/world/World.ts
++++ b/src/ts/world/World.ts
+@@ -31,6 +31,7 @@ import { Vehicle } from '../vehicles/Vehicle';
+ import { Scenario } from './Scenario';
+ import { Sky } from './Sky';
+ import { Ocean } from './Ocean';
++import { Multiplayer } from '../multiplayer/Multiplayer';
+ 
+ export class World
+ {
+@@ -151,6 +152,7 @@ export class World
+ 		this.inputManager = new InputManager(this, this.renderer.domElement);
+ 		this.cameraOperator = new CameraOperator(this, this.camera, this.params.Mouse_Sensitivity);
+ 		this.sky = new Sky(this);
++		this.registerUpdatable(new Multiplayer(this));
+ 		
+ 		// Load scene if path is supplied
+ 		if (worldScenePath !== undefined)
+-- 
+2.43.0
+
